@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Склад — фото и сканирование</title>
+<style>
+:root{--bg:#E8E9E4;--surface:#F6F6F3;--ink:#1E2226;--muted:#5D646B;--rack:#CDD1C9;--hit:#F2C200;--ok:#1E7A46;--err:#B3261E;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#1A1D20;--surface:#23272B;--ink:#ECEDE9;--muted:#A0A7AD;--rack:#3A4047;--ok:#5BC48A;--err:#FF8A7A;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-size:17px;line-height:1.45;padding:calc(env(safe-area-inset-top,0px) + 16px) 14px calc(env(safe-area-inset-bottom,0px) + 40px)}
+.wrap{max-width:640px;margin:0 auto}
+.tape{height:8px;border-radius:3px;margin-bottom:16px;background:repeating-linear-gradient(-45deg,var(--hit) 0 12px,#1E2226 12px 24px)}
+h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
+.sub{color:var(--muted);margin:0 0 16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px}
+.rk{font:inherit;border:0;border-radius:12px;min-height:84px;background:var(--rack);color:var(--ink);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:30px;font-weight:800;line-height:1}
+.rk small{font-size:12px;font-weight:600;margin-top:6px;opacity:.8}
+.rk.done{background:var(--ink);color:var(--bg)}
+.rk.busy{background:var(--hit);color:#1E2226}
+.rk:focus-visible,.btn:focus-visible,.back:focus-visible{outline:3px solid var(--hit);outline-offset:2px}
+.back{font:inherit;font-weight:700;border:0;background:transparent;color:var(--ink);padding:8px 0;margin:0 0 8px;cursor:pointer}
+.rackhead{display:flex;align-items:baseline;gap:12px;margin:0 0 4px}
+.rackhead .num{font-size:56px;font-weight:800;line-height:1}
+.rackhead .lbl{color:var(--muted)}
+.count{font-size:17px;margin:0 0 16px}
+.btn{display:flex;align-items:center;justify-content:center;width:100%;font:inherit;font-weight:800;font-size:21px;border:0;border-radius:14px;padding:20px 16px;background:var(--hit);color:#1E2226;cursor:pointer;margin-bottom:12px}
+.btn.ghost{background:transparent;border:2px solid var(--ink);color:var(--ink);font-size:18px;padding:14px}
+.btn.done{background:var(--ink);color:var(--bg);font-size:18px;padding:16px;margin-top:8px}
+.cam{position:relative;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:4/3;margin-bottom:10px}
+.cam video{width:100%;height:100%;object-fit:cover;display:block}
+.aim{position:absolute;left:12%;right:12%;top:35%;bottom:35%;border:3px solid var(--hit);border-radius:10px;box-shadow:0 0 0 2000px rgba(0,0,0,.25)}
+.sstat{font-weight:700;min-height:1.5em;margin:0 0 10px}
+.sstat.ok{color:var(--ok)}.sstat.err{color:var(--err)}
+.row{display:flex;gap:8px;margin-bottom:12px}
+.row input,.unk input{flex:1;min-width:0;font:inherit;padding:12px 14px;border-radius:10px;border:2px solid var(--ink);background:var(--surface);color:var(--ink)}
+.row button{font:inherit;font-weight:800;padding:0 18px;border-radius:10px;border:0;background:var(--ink);color:var(--bg);cursor:pointer}
+.unk{background:var(--surface);border-radius:12px;padding:14px;margin-bottom:12px;border-left:6px solid var(--err)}
+.unk p{margin:0 0 10px}
+.unk input{width:100%;margin-bottom:10px}
+.pick{display:block;width:100%;text-align:left;font:inherit;border:0;border-bottom:1px solid var(--rack);background:transparent;color:var(--ink);padding:10px 4px;cursor:pointer}
+.pick small{color:var(--muted)}
+.list{margin:0;padding-left:20px}
+.list li{margin:3px 0}
+.log{margin-top:18px;background:var(--surface);border-radius:12px;padding:12px 14px;min-height:48px}
+.log p{margin:4px 0;font-size:15px}
+.ok{color:var(--ok)}.err{color:var(--err)}
+.retry{font:inherit;font-weight:700;margin-top:8px;padding:10px 16px;border-radius:10px;border:2px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer}
+.vh{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="tape" aria-hidden="true"></div>
+  <section id="listView">
+    <h1 id="title">Склад</h1>
+    <p class="sub">Выберите стеллаж, у которого стоите.</p>
+    <div class="grid" id="grid"></div>
+  </section>
+  <section id="rackView" hidden>
+    <button type="button" class="back" id="backBtn">← Все стеллажи</button>
+    <div class="rackhead"><span class="num" id="rNum"></span><span class="lbl">стеллаж</span></div>
+    <p class="count" id="rCount"></p>
+    <button type="button" class="btn" id="scanBtn">▦ Сканировать штрихкоды</button>
+    <button type="button" class="btn ghost" id="camBtn">📷 Сфотографировать</button>
+    <button type="button" class="btn ghost" id="galBtn">Фото из галереи</button>
+    <button type="button" class="btn done" id="doneBtn">Готово, к списку стеллажей</button>
+  </section>
+  <section id="scanView" hidden>
+    <button type="button" class="back" id="scanClose">← Закрыть сканер</button>
+    <div class="rackhead"><span class="num" id="sNum"></span><span class="lbl">стеллаж · сканирование</span></div>
+    <div class="cam"><video id="vid" playsinline muted autoplay></video><div class="aim" aria-hidden="true"></div></div>
+    <p class="sstat" id="sStat" aria-live="polite"></p>
+    <button type="button" class="btn ghost" id="snapBtn">📸 Сфотографировать штрихкод</button>
+    <div class="row"><input id="man" inputmode="numeric" autocomplete="off" placeholder="Или введите штрихкод вручную" aria-label="Штрихкод вручную"><button type="button" id="manBtn">OK</button></div>
+    <div class="unk" id="unk" hidden>
+      <p><b>Штрихкод <span id="unkCode"></span> пока неизвестен.</b> Найдите товар, и штрихкод запомнится:</p>
+      <input id="sq" type="search" autocomplete="off" placeholder="Название, код или артикул" aria-label="Поиск товара">
+      <div id="sres"></div>
+      <button type="button" class="btn ghost" id="skipBtn">Пропустить</button>
+    </div>
+    <ul class="list" id="sList"></ul>
+  </section>
+  <div class="log" id="log" aria-live="polite"><p>Готово к работе.</p></div>
+</div>
+<input type="file" id="camIn" class="vh" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+<input type="file" id="snapIn" class="vh" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+<input type="file" id="galIn" class="vh" accept="image/*" multiple tabindex="-1" aria-hidden="true">
+<script id="__data" type="application/json">eyJzdG9yZSI6ItCh0LrQu9Cw0LQg4oSWMSIsInBsYW4iOnsiaCI6MTUwLCJ3IjoxMDAsImRvb3IiOnsidG8iOjM0LCJmcm9tIjoxNn19LCJyYWNrcyI6W3siaWQiOjEsInJhY2siOiIxIiwibGFiZWwiOiJTMS1SMDEiLCJwbGFuIjp7ImgiOjYsInciOjUwLCJ4Ijo0OCwieSI6OH0sInBob3RvcyI6NCwiaXRlbXMiOjN9LHsiaWQiOjIsInJhY2siOiIyIiwibGFiZWwiOiJTMS1SMDIiLCJwbGFuIjp7ImgiOjYsInciOjc2LCJ4IjoyMiwieSI6MjF9LCJwaG90b3MiOjE5LCJpdGVtcyI6MTN9LHsiaWQiOjMsInJhY2siOiIzIiwibGFiZWwiOiJTMS1SMDMiLCJwbGFuIjp7ImgiOjYsInciOjc2LCJ4IjoyMiwieSI6MzJ9LCJwaG90b3MiOjIxLCJpdGVtcyI6MTN9LHsiaWQiOjQsInJhY2siOiI0IiwibGFiZWwiOiJTMS1SMDQiLCJwbGFuIjp7ImgiOjYsInciOjc2LCJ4IjoyMiwieSI6NDN9LCJwaG90b3MiOjE5LCJpdGVtcyI6MH0seyJpZCI6NSwicmFjayI6IjUiLCJsYWJlbCI6IlMxLVIwNSIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5Ijo1NH0sInBob3RvcyI6MCwiaXRlbXMiOjB9LHsiaWQiOjYsInJhY2siOiI2IiwibGFiZWwiOiJTMS1SMDYiLCJwbGFuIjp7ImgiOjYsInciOjc2LCJ4IjoyMiwieSI6NjV9LCJwaG90b3MiOjAsIml0ZW1zIjowfSx7ImlkIjo3LCJyYWNrIjoiNyIsImxhYmVsIjoiUzEtUjA3IiwicGxhbiI6eyJoIjo2LCJ3Ijo3NiwieCI6MjIsInkiOjc2fSwicGhvdG9zIjowLCJpdGVtcyI6MH0seyJpZCI6OCwicmFjayI6IjgiLCJsYWJlbCI6IlMxLVIwOCIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5Ijo4N30sInBob3RvcyI6MCwiaXRlbXMiOjB9LHsiaWQiOjksInJhY2siOiI5IiwibGFiZWwiOiJTMS1SMDkiLCJwbGFuIjp7ImgiOjYsInciOjc2LCJ4IjoyMiwieSI6OTh9LCJwaG90b3MiOjAsIml0ZW1zIjowfSx7ImlkIjoxMCwicmFjayI6IjEwIiwibGFiZWwiOiJTMS1SMTAiLCJwbGFuIjp7ImgiOjYsInciOjc2LCJ4IjoyMiwieSI6MTA5fSwicGhvdG9zIjoxNSwiaXRlbXMiOjEyfSx7ImlkIjoxMSwicmFjayI6IjExIiwibGFiZWwiOiJTMS1SMTEiLCJwbGFuIjp7ImgiOjYsInciOjc2LCJ4IjoyMiwieSI6MTIwfSwicGhvdG9zIjoxMCwiaXRlbXMiOjN9LHsiaWQiOjEyLCJyYWNrIjoiMTIiLCJsYWJlbCI6IlMxLVIxMiIsInBsYW4iOnsiaCI6OSwidyI6OTYsIngiOjIsInkiOjEzMn0sInBob3RvcyI6MSwiaXRlbXMiOjE3fSx7ImlkIjoxMywicmFjayI6IjEzIiwibGFiZWwiOiJTMS1SMTMiLCJwbGFuIjp7ImgiOjQ4LCJ3Ijo3LCJ4IjoyLCJ5Ijo0NCwidmVydGljYWwiOnRydWV9LCJwaG90b3MiOjAsIml0ZW1zIjowfV0sImNlbGxzIjpbeyJpZCI6MSwicmFjayI6IjEiLCJsYWJlbCI6IlMxLVIwMSIsInBsYW4iOnsiaCI6NiwidyI6NTAsIngiOjQ4LCJ5Ijo4fSwicGhvdG9zIjo0LCJpdGVtcyI6M30seyJpZCI6MiwicmFjayI6IjIiLCJsYWJlbCI6IlMxLVIwMiIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5IjoyMX0sInBob3RvcyI6MTksIml0ZW1zIjoxM30seyJpZCI6MywicmFjayI6IjMiLCJsYWJlbCI6IlMxLVIwMyIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5IjozMn0sInBob3RvcyI6MjEsIml0ZW1zIjoxM30seyJpZCI6NCwicmFjayI6IjQiLCJsYWJlbCI6IlMxLVIwNCIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5Ijo0M30sInBob3RvcyI6MTksIml0ZW1zIjowfSx7ImlkIjo1LCJyYWNrIjoiNSIsImxhYmVsIjoiUzEtUjA1IiwicGxhbiI6eyJoIjo2LCJ3Ijo3NiwieCI6MjIsInkiOjU0fSwicGhvdG9zIjowLCJpdGVtcyI6MH0seyJpZCI6NiwicmFjayI6IjYiLCJsYWJlbCI6IlMxLVIwNiIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5Ijo2NX0sInBob3RvcyI6MCwiaXRlbXMiOjB9LHsiaWQiOjcsInJhY2siOiI3IiwibGFiZWwiOiJTMS1SMDciLCJwbGFuIjp7ImgiOjYsInciOjc2LCJ4IjoyMiwieSI6NzZ9LCJwaG90b3MiOjAsIml0ZW1zIjowfSx7ImlkIjo4LCJyYWNrIjoiOCIsImxhYmVsIjoiUzEtUjA4IiwicGxhbiI6eyJoIjo2LCJ3Ijo3NiwieCI6MjIsInkiOjg3fSwicGhvdG9zIjowLCJpdGVtcyI6MH0seyJpZCI6OSwicmFjayI6IjkiLCJsYWJlbCI6IlMxLVIwOSIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5Ijo5OH0sInBob3RvcyI6MCwiaXRlbXMiOjB9LHsiaWQiOjEwLCJyYWNrIjoiMTAiLCJsYWJlbCI6IlMxLVIxMCIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5IjoxMDl9LCJwaG90b3MiOjE1LCJpdGVtcyI6MTJ9LHsiaWQiOjExLCJyYWNrIjoiMTEiLCJsYWJlbCI6IlMxLVIxMSIsInBsYW4iOnsiaCI6NiwidyI6NzYsIngiOjIyLCJ5IjoxMjB9LCJwaG90b3MiOjEwLCJpdGVtcyI6M30seyJpZCI6MTIsInJhY2siOiIxMiIsImxhYmVsIjoiUzEtUjEyIiwicGxhbiI6eyJoIjo5LCJ3Ijo5NiwieCI6MiwieSI6MTMyfSwicGhvdG9zIjoxLCJpdGVtcyI6MTd9LHsiaWQiOjEzLCJyYWNrIjoiMTMiLCJsYWJlbCI6IlMxLVIxMyIsInBsYW4iOnsiaCI6NDgsInciOjcsIngiOjIsInkiOjQ0LCJ2ZXJ0aWNhbCI6dHJ1ZX0sInBob3RvcyI6MCwiaXRlbXMiOjB9XX0=</script>
+<script>
+(function(){
+  var data = JSON.parse(decodeURIComponent(escape(atob(document.getElementById('__data').textContent.trim()))));
+  var racks = data.racks || [];
+  var current = null, queue = [], running = null, failed = [];
+  var el = function(id){ return document.getElementById(id); };
+  var grid = el('grid'), log = el('log');
+  if (data.store) el('title').textContent = data.store;
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function pendingFor(r){ return queue.filter(function(q){ return q.rack === r; }).length + (running && running.rack === r ? 1 : 0); }
+  function renderList(){
+    grid.innerHTML = racks.map(function(r, i){
+      var p = pendingFor(r);
+      var cls = 'rk' + (p ? ' busy' : (r.photos > 0 ? ' done' : ''));
+      var sub = p ? 'загрузка…' : (r.photos > 0 ? r.photos + ' фото' : '');
+      return '<button type="button" class="' + cls + '" data-i="' + i + '" aria-label="Стеллаж ' + esc(r.rack) + '">' + esc(r.rack) + (sub ? '<small>' + sub + '</small>' : '') + '</button>';
+    }).join('');
+  }
+  function renderRack(){
+    if (!current) return;
+    el('rNum').textContent = current.rack; el('sNum').textContent = current.rack;
+    var p = pendingFor(current);
+    el('rCount').textContent = 'Фото: ' + (current.photos || 0) + (p ? ' (отправляется: ' + p + ')' : '') + ' · отсканировано сейчас: ' + (current.scanned || 0);
+  }
+  function render(){ renderList(); renderRack(); }
+  function say(html, cls){
+    var p = document.createElement('p'); if (cls) p.className = cls; p.innerHTML = html;
+    log.insertBefore(p, log.firstChild);
+    while (log.children.length > 8) log.removeChild(log.lastChild);
+  }
+  function hideAll(){ stopCam(); el('listView').hidden = true; el('rackView').hidden = true; el('scanView').hidden = true; }
+  function showRack(r){ hideAll(); current = r; el('rackView').hidden = false; renderRack(); window.scrollTo(0, 0); }
+  function showList(){ hideAll(); current = null; el('listView').hidden = false; renderList(); }
+  function route(){
+    var m = /^#r(\d+)/.exec(location.hash);
+    var r = m ? racks[Number(m[1])] : null;
+    if (r) showRack(r); else showList();
+  }
+  window.addEventListener('hashchange', route);
+  grid.addEventListener('click', function(e){ var b = e.target.closest('[data-i]'); if (b) location.hash = 'r' + b.dataset.i; });
+  function goList(){ if (/^#r/.test(location.hash)) history.back(); else showList(); }
+  el('backBtn').addEventListener('click', goList);
+  el('doneBtn').addEventListener('click', goList);
+
+  var camIn = el('camIn'), galIn = el('galIn');
+  el('camBtn').addEventListener('click', function(){ camIn.value = ''; camIn.click(); });
+  el('galBtn').addEventListener('click', function(){ galIn.value = ''; galIn.click(); });
+  [camIn, galIn].forEach(function(inp){
+    inp.addEventListener('change', function(){
+      if (!current || !inp.files || !inp.files.length) return;
+      for (var i = 0; i < inp.files.length; i++) queue.push({ rack: current, file: inp.files[i] });
+      render(); pump();
+    });
+  });
+  function shrink(file){
+    return new Promise(function(resolve){
+      if (!window.createImageBitmap){ resolve(file); return; }
+      createImageBitmap(file, { imageOrientation: 'from-image' }).then(function(bmp){
+        var k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+        var c = document.createElement('canvas');
+        c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+        c.toBlob(function(b){ resolve(b || file); }, 'image/jpeg', 0.82);
+      }).catch(function(){ resolve(file); });
+    });
+  }
+  function send(job){
+    return shrink(job.file).then(function(blob){
+      var url = 'https://n8n.soling.md/webhook/sklad/upload?cell=' + encodeURIComponent(job.rack.id) + '&label=' + encodeURIComponent(job.rack.label);
+      return fetch(url, { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg' }, body: blob });
+    }).then(function(res){ if (!res.ok) throw new Error('HTTP ' + res.status); return res; });
+  }
+  function pump(){
+    if (running || !queue.length) return;
+    running = queue.shift(); render();
+    var job = running;
+    send(job).catch(function(){ return send(job); }).then(function(){
+      job.rack.photos = (job.rack.photos || 0) + 1;
+      say('Стеллаж ' + esc(job.rack.rack) + ': фото загружено ✓', 'ok');
+    }).catch(function(){
+      failed.push(job);
+      say('Стеллаж ' + esc(job.rack.rack) + ': фото не загрузилось. <button type="button" class="retry" data-retry>Повторить (' + failed.length + ')</button>', 'err');
+    }).then(function(){ running = null; render(); pump(); });
+  }
+  log.addEventListener('click', function(e){
+    if (!e.target.closest('[data-retry]')) return;
+    queue = queue.concat(failed); failed = []; e.target.disabled = true; render(); pump();
+  });
+
+  var scan = { on: false, stream: null, det: null, zx: null, last: '', lastAt: 0, busy: false, unknown: '' };
+  function setS(t, cls){ var s = el('sStat'); s.textContent = t; s.className = 'sstat' + (cls ? ' ' + cls : ''); }
+  function getJSON(url, opt){ return fetch(url, opt).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }); }
+  el('scanBtn').addEventListener('click', function(){
+    if (!current) return;
+    el('rackView').hidden = true; el('scanView').hidden = false; el('unk').hidden = true; el('sList').innerHTML = '';
+    renderRack(); startCam();
+  });
+  el('scanClose').addEventListener('click', function(){ stopCam(); el('scanView').hidden = true; el('rackView').hidden = false; renderRack(); });
+  function camErr(e){ var n = e && (e.name || e.message) ? ' (' + (e.name || e.message) + ')' : ''; setS('Живая камера недоступна' + n + '. Нажмите «Сфотографировать штрихкод».', 'err'); }
+  function startCam(){
+    scan.on = true; scan.busy = false; setS('Наведите рамку на штрихкод…');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ camErr(); return; }
+    if ('BarcodeDetector' in window){
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }).then(function(st){
+        if (!scan.on){ st.getTracks().forEach(function(t){ t.stop(); }); return; }
+        scan.stream = st; var v = el('vid'); v.srcObject = st; v.play();
+        try { scan.det = new BarcodeDetector(); } catch (e) { scan.det = null; }
+        if (scan.det) loop(); else { st.getTracks().forEach(function(t){ t.stop(); }); scan.stream = null; loadZx(); }
+      }).catch(camErr);
+    } else loadZx();
+  }
+  function loop(){
+    if (!scan.on || !scan.det) return;
+    var v = el('vid');
+    if (v.readyState >= 2 && !scan.busy){
+      scan.det.detect(v).then(function(r){ if (r && r.length) onCode(r[0].rawValue); }).catch(function(){});
+    }
+    setTimeout(loop, 250);
+  }
+  function loadZx(){
+    if (window.ZXing){ zxStart(); return; }
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+    s.onload = zxStart; s.onerror = camErr; document.head.appendChild(s);
+  }
+  function zxStart(){
+    if (!scan.on) return;
+    try {
+      scan.zx = new ZXing.BrowserMultiFormatReader();
+      scan.zx.decodeFromConstraints({ video: { facingMode: { ideal: 'environment' } } }, el('vid'), function(res){ if (res && scan.on && !scan.busy) onCode(res.getText()); }).catch(camErr);
+    } catch (e) { camErr(); }
+  }
+  function stopCam(){
+    scan.on = false;
+    if (scan.stream){ scan.stream.getTracks().forEach(function(t){ t.stop(); }); scan.stream = null; }
+    if (scan.zx){ try { scan.zx.reset(); } catch (e) {} scan.zx = null; }
+    var v = el('vid'); if (v) v.srcObject = null;
+  }
+  function onCode(code){
+    code = String(code || '').trim();
+    if (!code || scan.busy || !current) return;
+    var now = Date.now();
+    if (code === scan.last && now - scan.lastAt < 4000) return;
+    scan.last = code; scan.lastAt = now; scan.busy = true;
+    if (navigator.vibrate) navigator.vibrate(60);
+    setS('Ищу ' + code + '…');
+    getJSON('https://n8n.soling.md/webhook/sklad/scan/lookup?code=' + encodeURIComponent(code)).then(function(r){
+      if (r && r.found) return link(code, r.uuid, false);
+      unknown(code);
+    }).catch(function(){ setS('Ошибка связи. Попробуйте ещё раз.', 'err'); scan.busy = false; });
+  }
+  function link(code, uuid, manual){
+    var rack = current;
+    return getJSON('https://n8n.soling.md/webhook/sklad/scan/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cell: rack.id, code: code, uuid: uuid, manual: manual }) }).then(function(r){
+      if (!r || !r.ok) throw new Error('fail');
+      rack.scanned = (rack.scanned || 0) + 1;
+      var li = document.createElement('li'); li.className = 'ok'; li.textContent = '✓ ' + r.name;
+      el('sList').insertBefore(li, el('sList').firstChild);
+      setS('✓ ' + r.name + (manual ? ' (штрихкод запомнен)' : '') + '. Сканируйте следующий.', 'ok');
+      say('Стеллаж ' + esc(rack.rack) + ': ' + esc(r.name) + ' ✓', 'ok');
+      renderRack(); scan.busy = false;
+    }).catch(function(){ setS('Не удалось записать. Попробуйте ещё раз.', 'err'); scan.busy = false; });
+  }
+  function unknown(code){
+    scan.unknown = code;
+    el('unkCode').textContent = code; el('sq').value = ''; el('sres').innerHTML = '';
+    el('unk').hidden = false; setS('Штрихкод не найден в базе.', 'err');
+    el('sq').focus();
+  }
+  el('snapBtn').addEventListener('click', function(){ var i = el('snapIn'); i.value = ''; i.click(); });
+  el('snapIn').addEventListener('change', function(){
+    var f = this.files && this.files[0]; if (!f) return;
+    setS('Читаю штрихкод с фото…');
+    decodeFile(f).then(function(code){ if (code){ scan.last = ''; scan.busy = false; onCode(code); } else setS('Штрихкод на фото не найден. Снимите ближе и ровнее или введите вручную.', 'err'); }).catch(function(){ setS('Не удалось прочитать фото.', 'err'); });
+  });
+  function decodeFile(f){
+    if ('BarcodeDetector' in window){
+      return createImageBitmap(f).then(function(bmp){ return new BarcodeDetector().detect(bmp); }).then(function(r){ return r && r.length ? r[0].rawValue : zxFile(f); }).catch(function(){ return zxFile(f); });
+    }
+    return zxFile(f);
+  }
+  function zxFile(f){
+    return new Promise(function(res, rej){
+      function go(){ var url = URL.createObjectURL(f); new ZXing.BrowserMultiFormatReader().decodeFromImageUrl(url).then(function(r){ URL.revokeObjectURL(url); res(r.getText()); }).catch(function(){ URL.revokeObjectURL(url); res(''); }); }
+      if (window.ZXing) go(); else { var s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js'; s.onload = go; s.onerror = rej; document.head.appendChild(s); }
+    });
+  }
+  var st = null, sseq = 0;
+  el('sq').addEventListener('input', function(){ clearTimeout(st); st = setTimeout(doSearch, 300); });
+  function doSearch(){
+    var q = el('sq').value.trim(), my = ++sseq;
+    if (q.length < 2){ el('sres').innerHTML = ''; return; }
+    el('sres').innerHTML = '<p class="sub">Ищу…</p>';
+    getJSON('https://n8n.soling.md/webhook/sklad/scan/search?q=' + encodeURIComponent(q)).then(function(rows){
+      if (my !== sseq) return;
+      rows = Array.isArray(rows) ? rows : [];
+      el('sres').innerHTML = rows.length ? rows.map(function(x){
+        return '<button type="button" class="pick" data-uuid="' + esc(x.uuid) + '">' + esc(x.name) + (x.code ? ' <small>' + esc(x.code) + '</small>' : '') + '</button>';
+      }).join('') : '<p class="sub">Ничего не найдено. Попробуйте другие слова.</p>';
+    }).catch(function(){ el('sres').innerHTML = '<p class="err">Ошибка поиска.</p>'; });
+  }
+  el('sres').addEventListener('click', function(e){
+    var b = e.target.closest('[data-uuid]'); if (!b) return;
+    el('unk').hidden = true;
+    link(scan.unknown, b.dataset.uuid, true);
+  });
+  el('skipBtn').addEventListener('click', function(){ el('unk').hidden = true; scan.busy = false; setS('Пропущено. Сканируйте следующий.'); });
+  el('manBtn').addEventListener('click', function(){ var v = el('man').value; el('man').value = ''; scan.last = ''; onCode(v); });
+  el('man').addEventListener('keydown', function(e){ if (e.key === 'Enter'){ e.preventDefault(); el('manBtn').click(); } });
+
+  window.addEventListener('beforeunload', function(e){ if (running || queue.length){ e.preventDefault(); e.returnValue = ''; } });
+  route();
+})();
+</script>
+</body>
+</html>
