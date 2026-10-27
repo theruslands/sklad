@@ -38,6 +38,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
 .row button{font:inherit;font-weight:800;padding:0 18px;border-radius:10px;border:0;background:var(--ink);color:var(--bg);cursor:pointer}
 .unk{background:var(--surface);border-radius:12px;padding:14px;margin-bottom:12px;border-left:6px solid var(--err)}
 .unk p{margin:0 0 10px}
+.unk.multi{border-left-color:var(--hit)}
 .unk input{width:100%;margin-bottom:10px}
 .pick{display:block;width:100%;text-align:left;font:inherit;border:0;border-bottom:1px solid var(--rack);background:transparent;color:var(--ink);padding:10px 4px;cursor:pointer}
 .pick small{color:var(--muted)}
@@ -75,8 +76,14 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
     <p class="sstat" id="sStat" aria-live="polite"></p>
     <button type="button" class="btn ghost" id="snapBtn">📸 Сфотографировать штрихкод</button>
     <div class="row"><input id="man" inputmode="numeric" autocomplete="off" placeholder="Или введите штрихкод вручную" aria-label="Штрихкод вручную"><button type="button" id="manBtn">OK</button></div>
+    <div class="unk multi" id="multi" hidden>
+      <p><b>Штрихкод <span id="mulCode"></span> есть у нескольких товаров.</b> Выберите, какой лежит перед вами:</p>
+      <div id="mulList"></div>
+      <button type="button" class="btn ghost" id="mulSkip">Пропустить</button>
+    </div>
     <div class="unk" id="unk" hidden>
-      <p><b>Штрихкод <span id="unkCode"></span> пока неизвестен.</b> Найдите товар, и штрихкод запомнится:</p>
+      <p><b>Штрихкода <span id="unkCode"></span> нет в МоёмСкладе.</b> <span id="unkArch"></span>Уведомление отправлено, штрихкод добавят в карточку.</p>
+      <p>Чтобы записать товар на этот стеллаж сейчас, найдите его по названию:</p>
       <input id="sq" type="search" autocomplete="off" placeholder="Название, код или артикул" aria-label="Поиск товара">
       <div id="sres"></div>
       <button type="button" class="btn ghost" id="skipBtn">Пропустить</button>
@@ -183,7 +190,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
   function getJSON(url, opt){ return fetch(url, opt).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }); }
   el('scanBtn').addEventListener('click', function(){
     if (!current) return;
-    el('rackView').hidden = true; el('scanView').hidden = false; el('unk').hidden = true; el('sList').innerHTML = '';
+    el('rackView').hidden = true; el('scanView').hidden = false; el('unk').hidden = true; el('multi').hidden = true; el('sList').innerHTML = '';
     renderRack(); startCam();
   });
   el('scanClose').addEventListener('click', function(){ stopCam(); el('scanView').hidden = true; el('rackView').hidden = false; renderRack(); });
@@ -235,11 +242,28 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
     scan.last = code; scan.lastAt = now; scan.busy = true;
     if (navigator.vibrate) navigator.vibrate(60);
     setS('Ищу ' + code + '…');
-    getJSON('https://n8n.soling.md/webhook/sklad/scan/lookup?code=' + encodeURIComponent(code)).then(function(r){
-      if (r && r.found) return link(code, r.uuid, false);
-      unknown(code);
+    el('unk').hidden = true; el('multi').hidden = true;
+    getJSON('https://n8n.soling.md/webhook/sklad/scan/lookup?code=' + encodeURIComponent(code) + '&cell=' + encodeURIComponent(current.id)).then(function(r){
+      var items = (r && r.items) || [];
+      if (items.length === 1) return link(code, items[0].uuid, false);
+      if (items.length > 1) return choose(code, items);
+      unknown(code, r && r.archived);
     }).catch(function(){ setS('Ошибка связи. Попробуйте ещё раз.', 'err'); scan.busy = false; });
   }
+  function choose(code, items){
+    scan.unknown = code;
+    el('mulCode').textContent = code;
+    el('mulList').innerHTML = items.map(function(x){
+      return '<button type="button" class="pick" data-muuid="' + esc(x.uuid) + '">' + esc(x.name) + (x.code ? ' <small>' + esc(x.code) + '</small>' : '') + '</button>';
+    }).join('');
+    el('multi').hidden = false; setS('Несколько товаров с этим штрихкодом — выберите нужный.', 'err');
+  }
+  el('mulList').addEventListener('click', function(e){
+    var b = e.target.closest('[data-muuid]'); if (!b) return;
+    el('multi').hidden = true;
+    link(scan.unknown, b.dataset.muuid, false);
+  });
+  el('mulSkip').addEventListener('click', function(){ el('multi').hidden = true; scan.busy = false; setS('Пропущено. Сканируйте следующий.'); });
   function link(code, uuid, manual){
     var rack = current;
     return getJSON('https://n8n.soling.md/webhook/sklad/scan/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cell: rack.id, code: code, uuid: uuid, manual: manual }) }).then(function(r){
@@ -247,15 +271,16 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
       rack.scanned = (rack.scanned || 0) + 1;
       var li = document.createElement('li'); li.className = 'ok'; li.textContent = '✓ ' + r.name;
       el('sList').insertBefore(li, el('sList').firstChild);
-      setS('✓ ' + r.name + (manual ? ' (штрихкод запомнен)' : '') + '. Сканируйте следующий.', 'ok');
+      setS('✓ ' + r.name + ' → стеллаж ' + rack.rack + (manual ? ' (выбран вручную)' : '') + '. Сканируйте следующий.', 'ok');
       say('Стеллаж ' + esc(rack.rack) + ': ' + esc(r.name) + ' ✓', 'ok');
       renderRack(); scan.busy = false;
     }).catch(function(){ setS('Не удалось записать. Попробуйте ещё раз.', 'err'); scan.busy = false; });
   }
-  function unknown(code){
+  function unknown(code, archived){
     scan.unknown = code;
     el('unkCode').textContent = code; el('sq').value = ''; el('sres').innerHTML = '';
-    el('unk').hidden = false; setS('Штрихкод не найден в базе.', 'err');
+    el('unkArch').textContent = archived ? 'Он есть только в архивной карточке: ' + archived + '. ' : '';
+    el('unk').hidden = false; setS('Штрихкода нет в МоёмСкладе.', 'err');
     el('sq').focus();
   }
   el('snapBtn').addEventListener('click', function(){ var i = el('snapIn'); i.value = ''; i.click(); });
