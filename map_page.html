@@ -49,6 +49,14 @@ h2{font-size:24px;font-weight:800;margin:44px 0 4px}
 .contents{background:var(--surface);border-radius:12px;padding:16px 18px;margin-top:14px}
 .contents h3{margin:0 0 8px;font-size:19px}
 .muted{color:var(--muted)}
+.pinw{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+.pinc{background:var(--surface);color:var(--ink);border-radius:14px;padding:20px;max-width:360px;width:100%}
+.pinc h2{margin:0 0 4px;font-size:22px}
+.pinc p{margin:0}
+.pinc input{width:100%;font:inherit;font-size:26px;letter-spacing:.25em;padding:12px 14px;border-radius:10px;border:2px solid var(--ink);background:var(--bg);color:var(--ink);margin:12px 0}
+.pinc button{width:100%;font:inherit;font-weight:800;font-size:19px;border:0;border-radius:12px;padding:14px;background:var(--hit);color:#1E2226;cursor:pointer}
+.pinerr{color:var(--err);font-weight:700;min-height:1.4em;margin-top:8px!important}
+[hidden]{display:none!important}
 </style>
 </head>
 <body>
@@ -63,6 +71,7 @@ h2{font-size:24px;font-weight:800;margin:44px 0 4px}
   <div id="ov"></div>
   <div id="cell"></div>
 </div>
+<div class="pinw" id="pinBox" hidden><form class="pinc" id="pinForm"><h2>PIN-код склада</h2><p>Введите один раз — телефон запомнит.</p><input id="pinIn" type="password" inputmode="numeric" autocomplete="off" aria-label="PIN-код склада"><button type="submit" id="pinBtn">Войти</button><p class="pinerr" id="pinErr" aria-live="polite"></p></form></div>
 <script id="__data" type="application/json">__DATA_PLACEHOLDER__</script>
 <script>
 (function(){
@@ -73,6 +82,34 @@ h2{font-size:24px;font-weight:800;margin:44px 0 4px}
   document.getElementById('st').textContent = D.store || 'Склад';
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   var SRC = { scan: 'сканер', photo: 'по фото', legacy_map: 'старая карта', manual: 'вручную' };
+
+  // PIN-код склада: вводится один раз, хранится на телефоне, уходит в заголовке x-sklad-pin.
+  var $ = function(id){ return document.getElementById(id); };
+  var PIN_KEY = 'sklad_pin', pinMem = '';
+  function getPin(){ try { return localStorage.getItem(PIN_KEY) || pinMem; } catch (e) { return pinMem; } }
+  function setPin(v){ pinMem = v; try { localStorage.setItem(PIN_KEY, v); } catch (e) {} }
+  function clearPin(){ pinMem = ''; try { localStorage.removeItem(PIN_KEY); } catch (e) {} }
+  function askPin(msg){ $('pinErr').textContent = msg || ''; $('pinIn').value = ''; $('pinBox').hidden = false; setTimeout(function(){ $('pinIn').focus(); }, 50); }
+  function api(url, opt){
+    opt = opt || {}; opt.headers = opt.headers || {}; opt.headers['x-sklad-pin'] = getPin();
+    return fetch(url, opt).then(function(r){
+      if (r.status === 403){ clearPin(); askPin('PIN неверный или сменился — введите заново.'); throw new Error('pin'); }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+  $('pinForm').addEventListener('submit', function(e){
+    e.preventDefault();
+    var v = $('pinIn').value.trim(); if (!v) return;
+    $('pinBtn').disabled = true; $('pinErr').textContent = 'Проверяю…';
+    fetch('/webhook/sklad/map/cell?id=0', { headers: { 'x-sklad-pin': v } }).then(function(r){
+      if (r.status === 403){ $('pinErr').textContent = 'Неверный PIN.'; return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setPin(v); $('pinBox').hidden = true; $('pinErr').textContent = '';
+      if (q.value.trim().length >= 2) find(); if (current) openCell(current);
+    }).catch(function(){ $('pinErr').textContent = 'Нет связи с сервером. Попробуйте ещё раз.'; }).then(function(){ $('pinBtn').disabled = false; });
+  });
+  if (!getPin()) askPin();
 
   function plan(hits, clickable){
     var W = P.w, H = P.h, d = P.door, m = (d.from + d.to) / 2;
@@ -109,7 +146,7 @@ h2{font-size:24px;font-weight:800;margin:44px 0 4px}
     var text = q.value.trim(); var my = ++seq;
     if (text.length < 2){ ans.innerHTML = ''; return; }
     ans.innerHTML = '<div class="empty">Ищу…</div>';
-    fetch('/webhook/sklad/map/find?q=' + encodeURIComponent(text)).then(function(r){ return r.json(); }).then(function(res){
+    api('/webhook/sklad/map/find?q=' + encodeURIComponent(text)).then(function(res){
       if (my !== seq) return;
       var rows = Array.isArray(res) ? res : (res.items || []);
       var unplaced = (res && res.unplaced) || [];
@@ -132,7 +169,7 @@ h2{font-size:24px;font-weight:800;margin:44px 0 4px}
     current = id; drawOv();
     var c = byId[id];
     cellBox.innerHTML = '<div class="contents"><h3>Стеллаж ' + esc(c.rack) + '</h3><p class="muted">Загружаю…</p></div>';
-    fetch('/webhook/sklad/map/cell?id=' + encodeURIComponent(id)).then(function(r){ return r.json(); }).then(function(res){
+    api('/webhook/sklad/map/cell?id=' + encodeURIComponent(id)).then(function(res){
       var rows = Array.isArray(res) ? res : (res.items || []);
       cellBox.innerHTML = '<div class="contents"><h3>Стеллаж ' + esc(c.rack) + '</h3>' + (rows.length ? '<ul class="items">' + rows.map(function(it){ return itemLi(it, id); }).join('') + '</ul>' : '<p class="muted">Пока не заполнено.</p>') + '</div>';
     }).catch(function(){ cellBox.innerHTML = '<div class="contents"><p class="muted">Не удалось загрузить.</p></div>'; });
@@ -141,7 +178,7 @@ h2{font-size:24px;font-weight:800;margin:44px 0 4px}
   ov.addEventListener('keydown', function(e){ if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('[data-cell]')){ e.preventDefault(); openCell(Number(e.target.closest('[data-cell]').getAttribute('data-cell'))); } });
 
   function post(path, body){
-    return fetch('/webhook/sklad/map/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    return api('/webhook/sklad/map/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   }
   function refresh(){ if (q.value.trim().length >= 2) find(); if (current) openCell(current); }
   document.addEventListener('click', function(e){

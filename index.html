@@ -48,6 +48,13 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
 .log p{margin:4px 0;font-size:15px}
 .ok{color:var(--ok)}.err{color:var(--err)}
 .retry{font:inherit;font-weight:700;margin-top:8px;padding:10px 16px;border-radius:10px;border:2px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer}
+.pinw{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+.pinc{background:var(--surface);color:var(--ink);border-radius:14px;padding:20px;max-width:360px;width:100%}
+.pinc h2{margin:0 0 4px;font-size:22px}
+.pinc p{margin:0}
+.pinc input{width:100%;font:inherit;font-size:26px;letter-spacing:.25em;padding:12px 14px;border-radius:10px;border:2px solid var(--ink);background:var(--bg);color:var(--ink);margin:12px 0}
+.pinc button{width:100%;font:inherit;font-weight:800;font-size:19px;border:0;border-radius:12px;padding:14px;background:var(--hit);color:#1E2226;cursor:pointer}
+.pinerr{color:var(--err);font-weight:700;min-height:1.4em;margin-top:8px!important}
 .vh{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none}
 [hidden]{display:none!important}
 </style>
@@ -92,6 +99,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
   </section>
   <div class="log" id="log" aria-live="polite"><p>Готово к работе.</p></div>
 </div>
+<div class="pinw" id="pinBox" hidden><form class="pinc" id="pinForm"><h2>PIN-код склада</h2><p>Введите один раз — телефон запомнит.</p><input id="pinIn" type="password" inputmode="numeric" autocomplete="off" aria-label="PIN-код склада"><button type="submit" id="pinBtn">Войти</button><p class="pinerr" id="pinErr" aria-live="polite"></p></form></div>
 <input type="file" id="camIn" class="vh" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
 <input type="file" id="snapIn" class="vh" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
 <input type="file" id="galIn" class="vh" accept="image/*" multiple tabindex="-1" aria-hidden="true">
@@ -102,6 +110,31 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
   var racks = data.racks || [];
   var current = null, queue = [], running = null, failed = [];
   var el = function(id){ return document.getElementById(id); };
+
+  // PIN-код склада: вводится один раз, хранится на телефоне, уходит в заголовке x-sklad-pin.
+  var PIN_KEY = 'sklad_pin', pinMem = '';
+  function getPin(){ try { return localStorage.getItem(PIN_KEY) || pinMem; } catch (e) { return pinMem; } }
+  function setPin(v){ pinMem = v; try { localStorage.setItem(PIN_KEY, v); } catch (e) {} }
+  function clearPin(){ pinMem = ''; try { localStorage.removeItem(PIN_KEY); } catch (e) {} }
+  function askPin(msg){ el('pinErr').textContent = msg || ''; el('pinIn').value = ''; el('pinBox').hidden = false; setTimeout(function(){ el('pinIn').focus(); }, 50); }
+  function withPin(opt){ opt = opt || {}; var h = opt.headers || {}; h['x-sklad-pin'] = getPin(); opt.headers = h; return opt; }
+  function apiFetch(url, opt){
+    return fetch(url, withPin(opt)).then(function(r){
+      if (r.status === 403){ clearPin(); askPin('PIN неверный или сменился — введите заново.'); throw new Error('pin'); }
+      return r;
+    });
+  }
+  el('pinForm').addEventListener('submit', function(e){
+    e.preventDefault();
+    var v = el('pinIn').value.trim(); if (!v) return;
+    el('pinBtn').disabled = true; el('pinErr').textContent = 'Проверяю…';
+    fetch('https://n8n.soling.md/webhook/sklad/scan/search?q=', { headers: { 'x-sklad-pin': v } }).then(function(r){
+      if (r.status === 403){ el('pinErr').textContent = 'Неверный PIN.'; return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setPin(v); el('pinBox').hidden = true; el('pinErr').textContent = '';
+    }).catch(function(){ el('pinErr').textContent = 'Нет связи с сервером. Попробуйте ещё раз.'; }).then(function(){ el('pinBtn').disabled = false; });
+  });
+  if (!getPin()) askPin();
   var grid = el('grid'), log = el('log');
   if (data.store) el('title').textContent = data.store;
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
@@ -165,7 +198,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
   function send(job){
     return shrink(job.file).then(function(blob){
       var url = 'https://n8n.soling.md/webhook/sklad/upload?cell=' + encodeURIComponent(job.rack.id) + '&label=' + encodeURIComponent(job.rack.label);
-      return fetch(url, { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg' }, body: blob });
+      return apiFetch(url, { method: 'POST', headers: { 'Content-Type': blob.type || 'image/jpeg' }, body: blob });
     }).then(function(res){ if (!res.ok) throw new Error('HTTP ' + res.status); return res; });
   }
   function pump(){
@@ -187,7 +220,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
 
   var scan = { on: false, stream: null, det: null, zx: null, last: '', lastAt: 0, busy: false, unknown: '' };
   function setS(t, cls){ var s = el('sStat'); s.textContent = t; s.className = 'sstat' + (cls ? ' ' + cls : ''); }
-  function getJSON(url, opt){ return fetch(url, opt).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }); }
+  function getJSON(url, opt){ return apiFetch(url, opt).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }); }
   el('scanBtn').addEventListener('click', function(){
     if (!current) return;
     el('rackView').hidden = true; el('scanView').hidden = false; el('unk').hidden = true; el('multi').hidden = true; el('sList').innerHTML = '';
