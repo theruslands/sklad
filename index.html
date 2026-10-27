@@ -31,6 +31,8 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
 .btn.done{background:var(--ink);color:var(--bg);font-size:18px;padding:16px;margin-top:8px}
 .cam{position:relative;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:4/3;margin-bottom:10px}
 .cam video{width:100%;height:100%;object-fit:cover;display:block}
+.torch{position:absolute;z-index:2;right:10px;top:10px;font:inherit;font-weight:800;font-size:16px;padding:10px 14px;border-radius:999px;border:2px solid #fff;background:rgba(0,0,0,.45);color:#fff;cursor:pointer}
+.torch.on{background:var(--hit);color:#1E2226;border-color:var(--hit)}
 .aim{position:absolute;left:12%;right:12%;top:35%;bottom:35%;border:3px solid var(--hit);border-radius:10px;box-shadow:0 0 0 2000px rgba(0,0,0,.25)}
 .sstat{font-weight:700;min-height:1.5em;margin:0 0 10px}
 .sstat.ok{color:var(--ok)}.sstat.err{color:var(--err)}
@@ -80,7 +82,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
   <section id="scanView" hidden>
     <button type="button" class="back" id="scanClose">← Закрыть сканер</button>
     <div class="rackhead"><span class="num" id="sNum"></span><span class="lbl">стеллаж · сканирование</span></div>
-    <div class="cam"><video id="vid" playsinline muted autoplay></video><div class="aim" aria-hidden="true"></div></div>
+    <div class="cam"><video id="vid" playsinline muted autoplay></video><div class="aim" aria-hidden="true"></div><button type="button" class="torch" id="torchBtn" hidden aria-pressed="false">🔦 Фонарик</button></div>
     <p class="sstat" id="sStat" aria-live="polite"></p>
     <button type="button" class="btn ghost" id="snapBtn">📸 Сфотографировать штрихкод</button>
     <div class="row"><input id="man" inputmode="numeric" autocomplete="off" placeholder="Или введите штрихкод вручную" aria-label="Штрихкод вручную"><button type="button" id="manBtn">OK</button></div>
@@ -249,7 +251,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
     if ('BarcodeDetector' in window){
       navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }).then(function(st){
         if (!scan.on){ st.getTracks().forEach(function(t){ t.stop(); }); return; }
-        scan.stream = st; var v = el('vid'); v.srcObject = st; v.play();
+        scan.stream = st; var v = el('vid'); v.srcObject = st; v.play(); torchSoon();
         try { scan.det = new BarcodeDetector(); } catch (e) { scan.det = null; }
         if (scan.det) loop(); else { st.getTracks().forEach(function(t){ t.stop(); }); scan.stream = null; loadZx(); }
       }).catch(camErr);
@@ -274,9 +276,33 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
     try {
       scan.zx = new ZXing.BrowserMultiFormatReader();
       scan.zx.decodeFromConstraints({ video: { facingMode: { ideal: 'environment' } } }, el('vid'), function(res){ if (res && scan.on && !scan.busy) onCode(res.getText()); }).catch(camErr);
+      torchSoon();
     } catch (e) { camErr(); }
   }
+  // Фонарик: кнопка появляется, только если камера телефона его поддерживает (Android Chrome; iPhone в браузере — нет).
+  // Выбор запоминается: включили один раз — при следующем сканировании загорится сам.
+  var TORCH_KEY = 'sklad_torch';
+  function torchPref(){ try { return localStorage.getItem(TORCH_KEY) === '1'; } catch (e) { return false; } }
+  function torchSave(on){ try { localStorage.setItem(TORCH_KEY, on ? '1' : '0'); } catch (e) {} }
+  function camTrack(){ var s = scan.stream || el('vid').srcObject; return s && s.getVideoTracks ? s.getVideoTracks()[0] : null; }
+  function torchShow(on){ var b = el('torchBtn'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.textContent = on ? '🔦 Выключить' : '🔦 Фонарик'; }
+  function setTorch(on){
+    var t = camTrack(); if (!t) return Promise.resolve(false);
+    return t.applyConstraints({ advanced: [{ torch: on }] }).then(function(){ scan.torch = on; torchShow(on); return true; }).catch(function(){ el('torchBtn').hidden = true; return false; });
+  }
+  function initTorch(){
+    if (!scan.on) return false;
+    var t = camTrack(); if (!t || t.readyState !== 'live') return false;
+    var caps = t.getCapabilities ? t.getCapabilities() : {};
+    if (!caps.torch){ el('torchBtn').hidden = true; return true; }
+    el('torchBtn').hidden = false; torchShow(false);
+    if (torchPref()) setTorch(true);
+    return true;
+  }
+  function torchSoon(){ var n = 0; (function tick(){ if (initTorch() || ++n > 12) return; setTimeout(tick, 300); })(); }
+  el('torchBtn').addEventListener('click', function(){ var on = !scan.torch; setTorch(on).then(function(ok){ if (ok) torchSave(on); }); });
   function stopCam(){
+    scan.torch = false; el('torchBtn').hidden = true;
     scan.on = false;
     if (scan.stream){ scan.stream.getTracks().forEach(function(t){ t.stop(); }); scan.stream = null; }
     if (scan.zx){ try { scan.zx.reset(); } catch (e) {} scan.zx = null; }
