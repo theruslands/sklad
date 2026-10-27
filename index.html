@@ -17,6 +17,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px}
 .rk{font:inherit;border:0;border-radius:12px;min-height:84px;background:var(--rack);color:var(--ink);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:30px;font-weight:800;line-height:1}
 .rk small{font-size:12px;font-weight:600;margin-top:6px;opacity:.8}
+.rk small+small{margin-top:2px}
 .rk.done{background:var(--ink);color:var(--bg)}
 .rk.busy{background:var(--hit);color:#1E2226}
 .rk:focus-visible,.btn:focus-visible,.back:focus-visible{outline:3px solid var(--hit);outline-offset:2px}
@@ -132,6 +133,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
       if (r.status === 403){ el('pinErr').textContent = 'Неверный PIN.'; return; }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       setPin(v); el('pinBox').hidden = true; el('pinErr').textContent = '';
+      loadCounts();
     }).catch(function(){ el('pinErr').textContent = 'Нет связи с сервером. Попробуйте ещё раз.'; }).then(function(){ el('pinBtn').disabled = false; });
   });
   if (!getPin()) askPin();
@@ -142,16 +144,29 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
   function renderList(){
     grid.innerHTML = racks.map(function(r, i){
       var p = pendingFor(r);
-      var cls = 'rk' + (p ? ' busy' : (r.photos > 0 ? ' done' : ''));
-      var sub = p ? 'загрузка…' : (r.photos > 0 ? r.photos + ' фото' : '');
-      return '<button type="button" class="' + cls + '" data-i="' + i + '" aria-label="Стеллаж ' + esc(r.rack) + '">' + esc(r.rack) + (sub ? '<small>' + sub + '</small>' : '') + '</button>';
+      var cls = 'rk' + (p ? ' busy' : ((r.photos > 0 || r.scans > 0) ? ' done' : ''));
+      var subs = p ? ['загрузка…'] : [r.photos > 0 ? r.photos + ' фото' : '', r.scans > 0 ? r.scans + ' скан' : ''].filter(Boolean);
+      return '<button type="button" class="' + cls + '" data-i="' + i + '" aria-label="Стеллаж ' + esc(r.rack) + '">' + esc(r.rack) + subs.map(function(s){ return '<small>' + s + '</small>'; }).join('') + '</button>';
     }).join('');
   }
   function renderRack(){
     if (!current) return;
     el('rNum').textContent = current.rack; el('sNum').textContent = current.rack;
     var p = pendingFor(current);
-    el('rCount').textContent = 'Фото: ' + (current.photos || 0) + (p ? ' (отправляется: ' + p + ')' : '') + ' · отсканировано сейчас: ' + (current.scanned || 0);
+    el('rCount').textContent = 'Фото: ' + (current.photos || 0) + (p ? ' (отправляется: ' + p + ')' : '') + ' · отсканировано: ' + (current.scans || 0) + (current.items != null ? ' · всего позиций на стеллаже: ' + current.items : '');
+  }
+  // Живые счётчики с сервера: фото, отсканировано, всего позиций по каждому стеллажу.
+  function loadCounts(){
+    if (!getPin()) return;
+    getJSON('https://n8n.soling.md/webhook/sklad/scan/racks').then(function(rows){
+      if (!Array.isArray(rows)) return;
+      rows.forEach(function(x){
+        var r = racks.filter(function(y){ return y.id === x.id; })[0];
+        if (!r){ r = { id: x.id, rack: x.rack, label: x.label }; racks.push(r); }
+        r.photos = x.photos; r.scans = x.scanned; r.items = x.items;
+      });
+      render();
+    }).catch(function(){});
   }
   function render(){ renderList(); renderRack(); }
   function say(html, cls){
@@ -302,6 +317,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
     return getJSON('https://n8n.soling.md/webhook/sklad/scan/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cell: rack.id, code: code, uuid: uuid, manual: manual }) }).then(function(r){
       if (!r || !r.ok) throw new Error('fail');
       rack.scanned = (rack.scanned || 0) + 1;
+      loadCounts();
       var li = document.createElement('li'); li.className = 'ok'; li.textContent = '✓ ' + r.name;
       el('sList').insertBefore(li, el('sList').firstChild);
       setS('✓ ' + r.name + ' → стеллаж ' + rack.rack + (manual ? ' (выбран вручную)' : '') + '. Сканируйте следующий.', 'ok');
@@ -359,6 +375,7 @@ h1{font-size:28px;line-height:1.1;margin:0 0 4px;font-weight:800}
 
   window.addEventListener('beforeunload', function(e){ if (running || queue.length){ e.preventDefault(); e.returnValue = ''; } });
   route();
+  loadCounts();
 })();
 </script>
 </body>
